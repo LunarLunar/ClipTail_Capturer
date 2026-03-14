@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ClipTail Capturer | 終幀捕手</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        paper: {
+                            100: '#fbf5e9',
+                            200: '#f0e4ce',
+                            300: '#e1cdab',
+                            400: '#d3b88c',
+                            500: '#c29d68',
+                            800: '#5c3e21',
+                            900: '#422814'
+                        },
+                        ink: {
+                            main: '#2c1e16',
+                            light: '#5c4538',
+                            red: '#8b2500' // 用作標題、強調的印泥紅/深紅色
+                        }
+                    },
+                    animation: {
+                        'fade-in': 'fadeIn 0.6s ease-out forwards',
+                    },
+                    keyframes: {
+                        fadeIn: {
+                            '0%': { opacity: '0', transform: 'translateY(15px)' },
+                            '100%': { opacity: '1', transform: 'translateY(0)' },
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- 引入有古典感覺與易讀性的英日文字體 -->
+    <link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@500;700&family=Outfit:wght@400;600&display=swap" rel="stylesheet">
+    <style>
+        body {
+            /* 泛黃牛皮紙底色 */
+            background-color: #f0e4ce;
+            /* 融合雜訊 SVG 作為紋理，增加羊皮紙/牛皮紙質感 */
+            background-image: url('data:image/svg+xml,%3Csvg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg"%3E%3Cfilter id="noiseFilter"%3E%3CfeTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="3" stitchTiles="stitch"/%3E%3C/filter%3E%3Crect width="100%25" height="100%25" filter="url(%23noiseFilter)" opacity="0.06"/%3E%3C/svg%3E');
+            color: #2c1e16;
+            font-family: 'Shippori Mincho', 'Outfit', serif;
+            overflow-x: hidden;
+        }
+        
+        /* 卷軸/卡片面板效果 */
+        .rpg-panel {
+            background-color: #fbf5e9;
+            background-image: url('data:image/svg+xml,%3Csvg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg"%3E%3Cfilter id="noiseFilter"%3E%3CfeTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="3" stitchTiles="stitch"/%3E%3C/filter%3E%3Crect width="100%25" height="100%25" filter="url(%23noiseFilter)" opacity="0.04"/%3E%3C/svg%3E');
+            border: 2px solid #d3b88c;
+            /* 邊框陰影加上內部邊緣模糊，營造紙張厚度感 */
+            box-shadow: 0 10px 25px -5px rgba(92, 62, 33, 0.2), inset 0 0 15px rgba(211, 184, 140, 0.2);
+            border-radius: 8px; /* 稍微導角，不像現代 UI 那麼圓 */
+        }
+        
+        .dropzone-active {
+            border-color: #8b2500 !important;
+            background-color: rgba(225, 205, 171, 0.4) !important;
+        }
+        
+        /* 隱藏元素 */
+        #video-player, #canvas-temp {
+            display: none;
+        }
+
+        /* 遊戲風自訂捲軸 */
+        ::-webkit-scrollbar {
+            width: 12px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #e1cdab; 
+            border-left: 2px solid #d3b88c;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #c29d68; 
+            border: 2px solid #d3b88c;
+            border-radius: 2px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #a98054; 
+        }
+
+        /* RPG UI 按鈕風格 */
+        .btn-rpg {
+            background: linear-gradient(180deg, #5c3e21 0%, #422814 100%);
+            color: #fbf5e9;
+            border: 2px solid #2a160b;
+            box-shadow: 0 4px 6px -1px rgba(44, 30, 22, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.15);
+            text-shadow: 0 1px 2px rgba(0,0,0,0.8);
+            border-radius: 4px;
+        }
+        .btn-rpg:hover {
+            background: linear-gradient(180deg, #74502d 0%, #5c3e21 100%);
+            transform: translateY(-1px);
+        }
+        .btn-rpg-outline {
+            background: transparent;
+            color: #5c3e21;
+            border: 2px solid #5c3e21;
+            font-weight: bold;
+            border-radius: 4px;
+        }
+        .btn-rpg-outline:hover {
+            background: rgba(92, 62, 33, 0.1);
+        }
+        .btn-rpg-outline.active {
+            background: #5c3e21;
+            color: #fbf5e9;
+        }
+    </style>
+</head>
+<body class="min-h-screen relative flex flex-col items-center py-10 px-4 md:px-8">
+
+    <!-- Language Switcher -->
+    <div class="w-full max-w-5xl flex justify-end mb-6 z-10 relative">
+        <div class="rpg-panel p-1.5 flex space-x-2">
+            <button onclick="setLang('jp')" id="lang-jp" class="lang-btn btn-rpg px-4 py-1.5 text-sm transition-all duration-200">日本語</button>
+            <button onclick="setLang('tw')" id="lang-tw" class="lang-btn btn-rpg-outline px-4 py-1.5 text-sm transition-all duration-200">繁體中文</button>
+            <button onclick="setLang('en')" id="lang-en" class="lang-btn btn-rpg-outline px-4 py-1.5 text-sm transition-all duration-200">English</button>
+        </div>
+    </div>
+
+    <!-- Main Container -->
+    <main class="w-full max-w-5xl z-10 relative">
+        <!-- Header -->
+        <header class="text-center mb-12 animate-fade-in" style="animation-delay: 0.1s;">
+            <!-- Title icon (Quill/Scroll concept) -->
+            <div class="mx-auto w-16 h-16 mb-4 flex items-center justify-center border-2 border-paper-400 rounded-full bg-paper-100 shadow-sm text-ink-main overflow-hidden">
+                <svg class="w-8 h-8 opacity-80" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+                </svg>
+            </div>
+            
+            <!-- 大標題使用紅色墨水印泥色系，明顯跳脫背景並符合和風/懷舊感 -->
+            <h1 id="t-title" class="text-4xl md:text-5xl lg:text-6xl font-bold tracking-wider text-ink-red mb-4 drop-shadow-sm font-['Shippori_Mincho']">
+                ClipTail Capturer (クリップテイル)
+            </h1>
+            
+            <!-- 副標題 -->
+            <div class="flex items-center justify-center gap-4 max-w-2xl mx-auto">
+                <div class="h-px bg-paper-400 flex-1"></div>
+                <p id="t-subtitle" class="text-lg md:text-xl text-ink-light font-medium px-4">
+                    動画の残り0.5秒の重要な瞬間を正確にキャプチャ
+                </p>
+                <div class="h-px bg-paper-400 flex-1"></div>
+            </div>
+        </header>
+
+        <!-- Dropzone / Upload Area (RPG Scroll style) -->
+        <div class="rpg-panel p-3 mb-10 mx-auto animate-fade-in" style="animation-delay: 0.2s;">
+            <div id="dropzone" class="relative group cursor-pointer flex flex-col items-center justify-center w-full h-64 border-2 border-dashed border-paper-500 rounded bg-paper-200/50 hover:bg-paper-200 transition-all duration-300">
+                <input type="file" id="file-input" accept="video/mp4" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" title="">
+                
+                <div class="flex flex-col items-center justify-center pt-5 pb-6 px-4 text-center z-0 pointer-events-none transition-transform duration-300 group-hover:scale-[1.02]">
+                    <div class="w-16 h-16 mb-4 rounded border border-paper-400 bg-paper-100 flex items-center justify-center group-hover:border-ink-red transition-colors duration-300 shadow-sm">
+                         <svg class="w-8 h-8 text-ink-light group-hover:text-ink-red transition-colors duration-300" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 20 16">
+                            <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M13 13h3a3 3 0 0 0 0-6h-.025A5.56 5.56 0 0 0 16 6.5 5.5 5.5 0 0 0 5.207 5.021C5.137 5.017 5.071 5 5 5a4 4 0 0 0 0 8h2.167M10 15V6m0 0L8 8m2-2 2 2"/>
+                        </svg>
+                    </div>
+                    <p id="t-dropzoneTitle" class="mb-2 text-xl font-bold text-ink-main">クリックしてアップロード、または動画をドロップ</p>
+                    <p id="t-dropzoneSubtitle" class="text-sm text-ink-light font-medium bg-paper-300/40 px-3 py-1 rounded">MP4のみ対応（自動抽出）</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Status Message -->
+        <div id="status-message" class="hidden animate-fade-in mx-auto px-6 py-4 rounded mb-10 border-2 font-bold shadow-sm rpg-panel text-center"></div>
+
+        <!-- Results Section -->
+        <div id="results-container" class="rpg-panel p-6 md:p-10 mb-12 animate-fade-in" style="animation-delay: 0.3s;">
+            <div class="flex items-center justify-center mb-8 border-b-2 border-paper-300 pb-4 relative">
+                <div class="absolute left-0 w-3 h-3 bg-paper-400 rotate-45 transform -translate-y-1/2 top-1/2"></div>
+                <h2 id="t-resultsTitle" class="text-2xl font-bold tracking-widest text-ink-main mx-4">
+                    抽出結果（5 フレーム）
+                </h2>
+                <div class="absolute right-0 w-3 h-3 bg-paper-400 rotate-45 transform -translate-y-1/2 top-1/2"></div>
+            </div>
+            
+            <div id="image-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-5">
+                <div id="placeholder-text" class="col-span-full h-40 border-2 border-dashed border-paper-400 rounded flex items-center justify-center bg-paper-200/50">
+                    <p id="t-placeholder" class="text-ink-light font-medium tracking-wide">抽出されたフレームがここに表示されます。</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Detailed Explanation Section -->
+        <div class="animate-fade-in relative" style="animation-delay: 0.4s;">
+            <!-- 卷軸裝飾頂部 -->
+            <div class="flex justify-center mb-8">
+                <div class="h-2 w-32 border-t-2 border-b-2 border-ink-main bg-paper-400 relative">
+                    <div class="absolute left-[-6px] top-[-4px] w-4 h-4 bg-ink-main rotate-45"></div>
+                    <div class="absolute right-[-6px] top-[-4px] w-4 h-4 bg-ink-main rotate-45"></div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <!-- 標題 -->
+                <div class="col-span-full text-center mb-4">
+                    <h2 id="t-explainTitle" class="text-2xl font-bold text-ink-main inline-block border-b-2 border-ink-red pb-2 px-6">仕組みは？</h2>
+                </div>
+                
+                <!-- 卡片 1 -->
+                <div class="rpg-panel p-6 hover:-translate-y-1 transition-transform duration-300 group">
+                    <div class="w-12 h-12 rounded border border-paper-400 bg-paper-200 text-ink-main flex items-center justify-center mb-4 group-hover:bg-paper-300 transition-colors shadow-inner">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
+                    </div>
+                    <h3 id="t-explain1Title" class="text-lg font-bold text-ink-main mb-3 border-b border-paper-300 pb-2">100% プライバシー保護</h3>
+                    <p id="t-explain1Desc" class="text-ink-light text-sm leading-relaxed font-medium">すべての処理はブラウザ内でローカルに行われます。サーバーへのアップロードは一切行われず、プライバシーが完全に保証されます。</p>
+                </div>
+
+                <!-- 卡片 2 -->
+                <div class="rpg-panel p-6 hover:-translate-y-1 transition-transform duration-300 group">
+                    <div class="w-12 h-12 rounded border border-paper-400 bg-paper-200 text-ink-main flex items-center justify-center mb-4 group-hover:bg-paper-300 transition-colors shadow-inner">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122"></path></svg>
+                    </div>
+                    <h3 id="t-explain2Title" class="text-lg font-bold text-ink-main mb-3 border-b border-paper-300 pb-2">正確なシーク</h3>
+                    <p id="t-explain2Desc" class="text-ink-light text-sm leading-relaxed font-medium">メタデータを自動的に読み取り、動画の最後0.5秒に的確にシークして5枚の連続するフレームを自動キャプチャします。</p>
+                </div>
+
+                <!-- 卡片 3 -->
+                <div class="rpg-panel p-6 hover:-translate-y-1 transition-transform duration-300 group">
+                    <div class="w-12 h-12 rounded border border-paper-400 bg-paper-200 text-ink-main flex items-center justify-center mb-4 group-hover:bg-paper-300 transition-colors shadow-inner">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                    </div>
+                    <h3 id="t-explain3Title" class="text-lg font-bold text-ink-main mb-3 border-b border-paper-300 pb-2">ゼロレイテンシ</h3>
+                    <p id="t-explain3Desc" class="text-ink-light text-sm leading-relaxed font-medium">アップロードやダウンロードのプロセスを完全に省略し、HTML5の&lt;video&gt;と&lt;canvas&gt;技術を用いてミリ秒レベルでの抽出を実現します。</p>
+                </div>
+            </div>
+        </div>
+
+        <footer class="mt-20 text-center text-ink-light text-sm font-medium opacity-80 pb-8">
+            &copy; 2026 ClipTail Capturer. Crafted for Explorers.
+        </footer>
+    </main>
+
+    <!-- Hidden elements for processing -->
+    <video id="video-player" crossorigin="anonymous" playsinline muted></video>
+    <canvas id="canvas-temp"></canvas>
+
+    <script>
+        // --- 1. i18n 多國語言支援 ---
+        const i18n = {
+            jp: {
+                title: "ClipTail Capturer (クリップテイル)",
+                subtitle: "動画の残り0.5秒の重要な瞬間を正確にキャプチャ",
+                dropzoneTitle: "クリックしてアップロード、または動画をドロップ",
+                dropzoneSubtitle: "MP4のみ対応（自動抽出）",
+                processing: "動画フレームを解析中... お待ちください。",
+                success: "✅ 抽出完了！画像をクリックしてダウンロードできます。",
+                errorPrefix: "❌ 処理失敗: ",
+                errorSuffix: " 有効なMP4形式であるか、再生時間が十分であるか確認してください。",
+                errorDur: "動画の長さが必要な0.5秒未満です。",
+                resultsTitle: "抽出結果（5 フレーム）",
+                placeholder: "抽出されたフレームがここに表示されます。",
+                dlBtn: "取得する", /* Retrieve / Download in RPG context */
+                explainTitle: "仕組みは？",
+                explain1Title: "100% プライバシー保護",
+                explain1Desc: "すべての処理はブラウザ内でローカルに行われます。サーバーへのアップロードは一切行われず、プライバシーが完全に保証されます。",
+                explain2Title: "正確なシーク",
+                explain2Desc: "メタデータを自動的に読み取り、動画の最後0.5秒に的確にシークして5枚の連続するフレームを自動キャプチャします。",
+                explain3Title: "ゼロレイテンシ",
+                explain3Desc: "アップロードやダウンロードのプロセスを完全に省略し、HTML5の<video>と<canvas>技術を用いてミリ秒レベルでの抽出を実現します。"
+            },
+            tw: {
+                title: "終幀捕手 | ClipTail Capturer",
+                subtitle: "精準捕捉影片最後 0.5 秒的關鍵瞬間",
+                dropzoneTitle: "點擊上傳或將影片拖曳至此處",
+                dropzoneSubtitle: "僅支援 MP4 格式 (自動提取)",
+                processing: "正在解析影片幀... 請稍候。",
+                success: "✅ 影片結尾 5 張截圖已成功提取！點擊單張圖片即可取得。",
+                errorPrefix: "❌ 處理失敗: ",
+                errorSuffix: " 請檢查檔案是否為有效的 MP4 格式，或時長是否足夠。",
+                errorDur: "影片時長不足所需的 0.5 秒。",
+                resultsTitle: "提取結果 (5 張截圖)",
+                placeholder: "您提取的截圖將顯示於此。",
+                dlBtn: "取得",
+                explainTitle: "如何運作？ (How it works?)",
+                explain1Title: "100% 隱私安全",
+                explain1Desc: "所有影片處理皆在您的瀏覽器端 (Client-side) 完成，不會上傳任何檔案至雲端或伺服器，完全保障您的隱私。",
+                explain2Title: "精準定位尋找",
+                explain2Desc: "透過自動讀取影片 MetaData，程式精準跳轉至影片倒數 0.5 秒處，並自動補足 5 張相連的截圖點，無須手動拖拽進度條。",
+                explain3Title: "毫秒級零延遲",
+                explain3Desc: "捨棄繁瑣的檔案上傳與下載流程，直接利用 HTML5 的 <video> 與 <canvas> 技術在本地端進行毫秒級的截圖解析。"
+            },
+            en: {
+                title: "ClipTail Capturer",
+                subtitle: "Precision capture of the final 0.5 seconds of your video",
+                dropzoneTitle: "Click to upload or drag & drop video here",
+                dropzoneSubtitle: "MP4 only (Auto-extracts instantly)",
+                processing: "Processing video frames... Please wait.",
+                success: "✅ Extraction complete! Click on any image to loot.",
+                errorPrefix: "❌ Processing failed: ",
+                errorSuffix: " Please check if the file is a valid MP4 or if the duration is sufficient.",
+                errorDur: "Video duration is shorter than the required 0.5 seconds.",
+                resultsTitle: "Extraction Results (5 Frames)",
+                placeholder: "Your extracted frames will appear here.",
+                dlBtn: "Loot", // Fits the RPG theme better
+                explainTitle: "How it works?",
+                explain1Title: "100% Privacy-First",
+                explain1Desc: "All video processing happens locally in your browser (client-side). No files are ever uploaded to any server, guaranteeing your privacy.",
+                explain2Title: "Precision Seeking",
+                explain2Desc: "Automatically reads metadata to seek exactly to the last 0.5 seconds and captures 5 consecutive frames without manual scraping.",
+                explain3Title: "Zero Latency",
+                explain3Desc: "Bypasses the upload/download bottleneck entirely, using HTML5 <video> and <canvas> APIs for millisecond-level local frame extraction."
+            }
+        };
+
+        // 預設為日文
+        let currentLang = 'jp';
+
+        function setLang(lang) {
+            currentLang = lang;
+            const t = i18n[lang];
+            
+            // 語系 html tag 切換
+            document.documentElement.lang = lang === 'tw' ? 'zh-Hant' : (lang === 'en' ? 'en' : 'ja');
+
+            // Update texts
+            document.title = t.title;
+            document.getElementById('t-title').textContent = t.title;
+            document.getElementById('t-subtitle').textContent = t.subtitle;
+            document.getElementById('t-dropzoneTitle').textContent = t.dropzoneTitle;
+            document.getElementById('t-dropzoneSubtitle').textContent = t.dropzoneSubtitle;
+            document.getElementById('t-resultsTitle').textContent = t.resultsTitle;
+            
+            if(document.getElementById('t-placeholder')) document.getElementById('t-placeholder').textContent = t.placeholder;
+            
+            document.getElementById('t-explainTitle').textContent = t.explainTitle;
+            document.getElementById('t-explain1Title').textContent = t.explain1Title;
+            document.getElementById('t-explain1Desc').textContent = t.explain1Desc;
+            document.getElementById('t-explain2Title').textContent = t.explain2Title;
+            document.getElementById('t-explain2Desc').textContent = t.explain2Desc;
+            document.getElementById('t-explain3Title').textContent = t.explain3Title;
+            document.getElementById('t-explain3Desc').textContent = t.explain3Desc;
+
+            // Update button styles (RPG style swapping)
+            ['jp', 'tw', 'en'].forEach(l => {
+                const btn = document.getElementById(`lang-${l}`);
+                if(l === lang) {
+                    btn.className = 'lang-btn btn-rpg px-4 py-1.5 text-sm transition-all duration-200';
+                } else {
+                    btn.className = 'lang-btn btn-rpg-outline px-4 py-1.5 text-sm transition-all duration-200';
+                }
+            });
+
+            // Update language of dynamically generated images if any exists
+            document.querySelectorAll('.js-dl-btn-text').forEach(el => {
+                el.textContent = t.dlBtn;
+            });
+        }
+
+        // --- 2. DOM 元素 ---
+        const dropzone = document.getElementById('dropzone');
+        const fileInput = document.getElementById('file-input');
+        const videoPlayer = document.getElementById('video-player');
+        const canvasTemp = document.getElementById('canvas-temp');
+        const resultsContainer = document.getElementById('results-container');
+        const imageGrid = document.getElementById('image-grid');
+        const statusMessage = document.getElementById('status-message');
+
+        const NUM_FRAMES = 5;
+        const DURATION_TO_SCAN = 0.5;
+
+        // --- 3. Drag & Drop ---
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            dropzone.addEventListener(eventName, preventDefaults, false);
+        });
+
+        function preventDefaults(e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+
+        ['dragenter', 'dragover'].forEach(eventName => {
+            dropzone.addEventListener(eventName, () => dropzone.classList.add('dropzone-active'), false);
+        });
+
+        ['dragleave', 'drop'].forEach(eventName => {
+            dropzone.addEventListener(eventName, () => dropzone.classList.remove('dropzone-active'), false);
+        });
+
+        dropzone.addEventListener('drop', (e) => {
+            const dt = e.dataTransfer;
+            const files = dt.files;
+            if (files.length > 0) {
+                fileInput.files = files; 
+                handleProcessStart(); 
+            }
+        }, false);
+
+        fileInput.addEventListener('change', () => {
+            if (fileInput.files.length > 0) {
+                handleProcessStart(); 
+            }
+        });
+
+        // --- 4. UI 提示 ---
+        function showStatus(messageKey, type, customErr = '') {
+            const t = i18n[currentLang];
+            let msg = "";
+            
+            // 使用紙質邊框顏色
+            let classes = "mx-auto px-6 py-4 rounded mb-10 border-2 font-bold shadow-sm text-center rpg-panel ";
+
+            if (type === 'processing') {
+                msg = `<div class="flex items-center justify-center gap-3">
+                        <svg class="animate-spin h-5 w-5 text-ink-main" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-30" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-70" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                        <span class="text-ink-main tracking-wider">${t.processing}</span>
+                       </div>`;
+                classes += "border-paper-500 bg-paper-200 mt-6";
+            } else if (type === 'success') {
+                msg = `<span class="text-green-800 tracking-wider">${t.success}</span>`;
+                classes += "border-green-600 bg-green-50 mt-6";
+            } else if (type === 'error') {
+                msg = `<span class="text-ink-red tracking-wider">${t.errorPrefix}${customErr}${t.errorSuffix}</span>`;
+                classes += "border-ink-red bg-red-50 mt-6";
+            }
+
+            statusMessage.innerHTML = msg;
+            statusMessage.className = classes; 
+            statusMessage.classList.remove('hidden');
+        }
+
+        function clearGrid() {
+            imageGrid.innerHTML = '';
+            statusMessage.classList.add('hidden');
+        }
+
+        // --- 5. 擷取影片 ---
+        function seekToTime(time) {
+            return new Promise((resolve, reject) => {
+                videoPlayer.currentTime = time;
+                
+                const onSeeked = () => {
+                    videoPlayer.removeEventListener('seeked', onSeeked);
+                    videoPlayer.removeEventListener('error', onError);
+                    resolve();
+                };
+                const onError = (e) => {
+                    videoPlayer.removeEventListener('seeked', onSeeked);
+                    videoPlayer.removeEventListener('error', onError);
+                    reject(new Error(`Seeking error`));
+                };
+
+                videoPlayer.addEventListener('seeked', onSeeked);
+                videoPlayer.addEventListener('error', onError);
+                
+                setTimeout(() => {
+                    if (videoPlayer.readyState >= 2) {
+                        videoPlayer.removeEventListener('seeked', onSeeked);
+                        videoPlayer.removeEventListener('error', onError);
+                        resolve();
+                    }
+                }, 150);
+            });
+        }
+
+        function captureFrameAndDisplay(frameIndex, time) {
+            const ctx = canvasTemp.getContext('2d');
+            canvasTemp.width = videoPlayer.videoWidth;
+            canvasTemp.height = videoPlayer.videoHeight;
+            ctx.drawImage(videoPlayer, 0, 0, canvasTemp.width, canvasTemp.height);
+            
+            const imageDataURL = canvasTemp.toDataURL('image/png', 0.95);
+            const t = i18n[currentLang];
+
+            // 像是一張老照片或羊皮紙卡片
+            const card = document.createElement('a');
+            card.href = imageDataURL;
+            card.download = `Frame_${frameIndex}_${time.toFixed(2)}s.png`;
+            card.className = "group relative flex flex-col items-center bg-paper-100 border border-paper-400 p-2 hover:bg-white hover:border-ink-red transition-all duration-300 cursor-pointer overflow-hidden transform hover:-translate-y-1 shadow-md";
+            card.style.borderRadius = "2px"; 
+            card.title = "Click to Loot";
+
+            // 照片裝幀框
+            const imgWrapper = document.createElement('div');
+            imgWrapper.className = "w-full overflow-hidden aspect-video relative bg-ink-main mb-3 border border-paper-300 shadow-inner";
+
+            const img = document.createElement('img');
+            img.src = imageDataURL;
+            img.className = "w-full h-full object-cover transition-transform duration-500 group-hover:scale-105 filter group-hover:contrast-110";
+            
+            // 下載遮罩 (和風/懷舊魔法特效)
+            const overlay = document.createElement('div');
+            overlay.className = "absolute inset-0 bg-ink-red/40 backdrop-blur-[2px] opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-center justify-center";
+            overlay.innerHTML = `<svg class="w-10 h-10 text-paper-100 drop-shadow-md" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 4v16m8-8H4"></path></svg>`;
+
+            const badge = document.createElement('div');
+            badge.className = "absolute top-2 right-2 bg-ink-main/80 backdrop-blur-sm text-paper-200 text-xs py-1 px-2 font-mono border border-paper-800 shadow";
+            badge.textContent = `${time.toFixed(2)}s`;
+
+            const label = document.createElement('div');
+            label.className = "text-center w-full pb-1 border-t border-dashed border-paper-300 pt-2 relative";
+            // 圖釘裝飾
+            label.innerHTML = `
+                <div class="absolute -top-[3px] left-1/2 -ml-1 w-2 h-2 rounded-full bg-paper-800 shadow-sm"></div>
+                <span class="block text-sm font-bold text-ink-main mb-1 tracking-widest font-serif">フレーム ${frameIndex}</span>
+                <span class="js-dl-btn-text inline-block px-3 py-1 bg-paper-300 text-ink-main text-xs border border-paper-400 group-hover:bg-ink-red group-hover:text-paper-100 group-hover:border-ink-red transition-colors">${t.dlBtn}</span>
+            `;
+
+            imgWrapper.appendChild(img);
+            imgWrapper.appendChild(overlay);
+            imgWrapper.appendChild(badge);
+            card.appendChild(imgWrapper);
+            card.appendChild(label);
+            
+            imageGrid.appendChild(card);
+        }
+
+        async function handleProcessStart() {
+            const file = fileInput.files[0];
+            if (!file) return;
+            const t = i18n[currentLang];
+
+            clearGrid();
+            showStatus('processing', 'processing');
+            fileInput.disabled = true;
+
+            try {
+                videoPlayer.src = URL.createObjectURL(file);
+                
+                await new Promise((resolve, reject) => {
+                    const onLoaded = () => { videoPlayer.removeEventListener('loadedmetadata', onLoaded); resolve(); };
+                    const onErr = (e) => { videoPlayer.removeEventListener('error', onErr); reject(e); };
+                    videoPlayer.addEventListener('loadedmetadata', onLoaded);
+                    videoPlayer.addEventListener('error', onErr);
+                });
+
+                const duration = videoPlayer.duration;
+                if (duration < DURATION_TO_SCAN) {
+                    throw new Error(t.errorDur);
+                }
+
+                const interval = DURATION_TO_SCAN / NUM_FRAMES;
+                const startPoint = duration - DURATION_TO_SCAN;
+                
+                await new Promise(r => setTimeout(r, 400));
+
+                for (let i = 0; i < NUM_FRAMES; i++) {
+                    const time = startPoint + (i * interval);
+                    await seekToTime(time);
+                    captureFrameAndDisplay(i + 1, time);
+                }
+
+                showStatus('success', 'success');
+
+            } catch (error) {
+                console.error(error);
+                showStatus('error', 'error', error.message);
+                
+                imageGrid.innerHTML = `
+                <div id="placeholder-text" class="col-span-full h-40 border-2 border-dashed border-paper-400 rounded flex items-center justify-center bg-paper-200/50">
+                    <p id="t-placeholder" class="text-ink-light font-medium tracking-wide">${t.placeholder}</p>
+                </div>`;
+            } finally {
+                URL.revokeObjectURL(videoPlayer.src);
+                fileInput.disabled = false;
+                fileInput.value = ''; 
+            }
+        }
+
+        // 初始化為日語 (Japanese as Default)
+        window.addEventListener('DOMContentLoaded', () => {
+            setLang('jp');
+        });
+        
+    </script>
+</body>
+</html>
